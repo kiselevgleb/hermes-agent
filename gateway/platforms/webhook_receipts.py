@@ -55,6 +55,7 @@ class DeliveryReceipt:
     reason: str = ""
     ref: str = ""  # what it started: ``cron_job:<ref>``, ``deliver:<target>``, ``admission:<id>``
     outcome_unknown: bool = False  # a send that may have landed: keep the claim even on a failure
+    body_digest: str = ""  # sha256 of the body, kept only for a route whose identity is a sender-chosen header
 
     @property
     def identity(self):
@@ -82,7 +83,8 @@ CREATE TABLE IF NOT EXISTS receipts (
     reason TEXT NOT NULL DEFAULT '',
     ref TEXT NOT NULL DEFAULT '',
     received_at REAL NOT NULL,
-    claim INTEGER NOT NULL DEFAULT 0
+    claim INTEGER NOT NULL DEFAULT 0,
+    body_digest TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS receipts_claim ON receipts(profile, route, delivery_id) WHERE claim = 1;
 CREATE INDEX IF NOT EXISTS receipts_received ON receipts(received_at);
@@ -126,19 +128,32 @@ class WebhookReceipts:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA synchronous=NORMAL")
                 conn.executescript(_SCHEMA)
+                if "body_digest" not in {row[1] for row in conn.execute("PRAGMA table_info(receipts)")}:
+                    conn.execute("ALTER TABLE receipts ADD COLUMN body_digest TEXT NOT NULL DEFAULT ''")
                 self._conn = conn
             yield self._conn
 
-    def claim(self, identity, event_type: str, now: float) -> Optional[int]:
+    def conflicting_body(self, identity, digest: str, now: float) -> bool:
+        """Whether this delivery id was already accepted with a different body inside the retention window."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM receipts WHERE profile = ? AND route = ? AND delivery_id = ? AND outcome = ?"
+                " AND body_digest != '' AND body_digest != ? AND received_at >= ? LIMIT 1",
+                (identity.profile, identity.route, identity.delivery_id, ACCEPTED, digest,
+                 now - self.retention_seconds),
+            ).fetchone()
+        return row is not None
+
+    def claim(self, identity, event_type: str, now: float, body_digest: str = "") -> Optional[int]:
         """Durably claim *identity*; the new row id, or None when a live claim already holds it."""
         with self._connect() as conn, conn:
             self._prune(conn, now)
             self._drain_unreleased(conn)
             try:
                 cursor = conn.execute(
-                    "INSERT INTO receipts (profile, route, delivery_id, event_type, outcome, received_at, claim)"
-                    " VALUES (?, ?, ?, ?, ?, ?, 1)",
-                    (identity.profile, identity.route, identity.delivery_id, event_type, ACCEPTED, now))
+                    "INSERT INTO receipts (profile, route, delivery_id, event_type, outcome, received_at, claim,"
+                    " body_digest) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+                    (identity.profile, identity.route, identity.delivery_id, event_type, ACCEPTED, now, body_digest))
             except sqlite3.IntegrityError:
                 return None
             return cursor.lastrowid
@@ -211,13 +226,15 @@ class WebhookReceipts:
             self._release(conn, identity, reason)
         self._unreleased.clear()
 
-    def record(self, identity, event_type: str, outcome: str, reason: str, ref: str, now: float) -> None:
+    def record(self, identity, event_type: str, outcome: str, reason: str, ref: str, now: float,
+               body_digest: str = "") -> None:
         with self._connect() as conn, conn:
             self._prune(conn, now)
             conn.execute(
-                "INSERT INTO receipts (profile, route, delivery_id, event_type, outcome, reason, ref, received_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (identity.profile, identity.route, identity.delivery_id, event_type, outcome, reason, ref, now))
+                "INSERT INTO receipts (profile, route, delivery_id, event_type, outcome, reason, ref, received_at,"
+                " body_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (identity.profile, identity.route, identity.delivery_id, event_type, outcome, reason, ref, now,
+                 body_digest))
 
     def _prune(self, conn: sqlite3.Connection, now: float) -> None:
         if now < self._next_prune_at:
@@ -262,7 +279,7 @@ async def file_receipt(store: WebhookReceipts, receipt: DeliveryReceipt, respons
                                     receipt.ref, keep_claim=keep_claim)
             return not keep_claim
         await asyncio.to_thread(store.record, receipt.identity, receipt.event_type, outcome, reason,
-                                receipt.ref, time.time())
+                                receipt.ref, time.time(), receipt.body_digest)
     except sqlite3.Error:
         logger.warning("[webhook] Could not record receipt for delivery %s on route %s", receipt.delivery_id,
                        receipt.route, exc_info=True)
@@ -278,6 +295,8 @@ def outcome_for_response(status: int, body_text: str) -> tuple[str, str]:
     if not isinstance(body, dict):
         body = {}
     state = body.get("status")
+    if status == 409:
+        return FAILED, "same delivery id, different body"
     if state == FAILED and body.get("terminal"):
         return FAILED, f"gave up after {body.get('attempts')} failed attempts"
     if state == DUPLICATE:
