@@ -3,6 +3,9 @@
 Four [agent skills](skills) for [Hermes Agent](../../README.md) and the small service they work
 on. The skills do the routine parts of engineering work that are easy to get subtly wrong:
 
+**Demo (2 min):** `review-pr` on [PR #2](https://github.com/kiselevgleb/hermes-agent/pull/2). Recorded right after the run; the terminal shows the full session.
+https://github.com/user-attachments/assets/11fd1130-c599-43be-8161-45701b7ef58c
+
 | Skill | Ask | Result |
 |---|---|---|
 | [`review-pr`](skills/review-pr/SKILL.md) | "review PR #12" | one GitHub review, inline comments grouped by severity |
