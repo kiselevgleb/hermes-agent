@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Player {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  wallet    Wallet?
+
+  @@index([createdAt, id], map: "players_created_at_id_idx")
+  @@map("players")
+}
+
+model Wallet {
+  id           String        @id @default(uuid()) @db.Uuid
+  playerId     String        @unique @map("player_id") @db.Uuid
+  balance      BigInt        @default(0)
+  version      Int           @default(0)
+  player       Player        @relation(fields: [playerId], references: [id])
+  transactions Transaction[]
+
+  @@map("wallets")
+}
+
+model Transaction {
+  id                   String   @id @default(uuid()) @db.Uuid
+  walletId             String   @map("wallet_id") @db.Uuid
+  externalId           String   @map("external_id")
+  type                 String
+  amount               BigInt
+  balanceAfter         BigInt   @map("balance_after")
+  referenceExternalId  String?  @map("reference_external_id")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  wallet               Wallet   @relation(fields: [walletId], references: [id])
+
+  @@unique([walletId, externalId], map: "transactions_wallet_external_id_unique")
+  @@index([walletId, createdAt], map: "transactions_wallet_id_created_at_idx")
+  @@map("transactions")
+}
