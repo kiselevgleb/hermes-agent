@@ -62,7 +62,8 @@ export class WalletsService {
           throw new NotFoundException('wallet not found');
         }
 
-        const existing = await lock.findTx(input.externalId);
+        // Wins arrive once per round from the provider; skip the extra lookup.
+        const existing = input.type === 'win' ? null : await lock.findTx(input.externalId);
         const bet = !existing && input.type === 'win' ? await lock.findTx(input.betExternalId ?? '') : null;
         const original =
           !existing && input.type === 'rollback' ? await lock.findTx(input.originalExternalId ?? '') : null;

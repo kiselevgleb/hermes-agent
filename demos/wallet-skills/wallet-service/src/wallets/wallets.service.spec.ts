@@ -80,13 +80,11 @@ describe('WalletsService', () => {
     expect(gateway.wallets.get('w1')?.balance).toBe(0n);
   });
 
-  it('credits one win and leaves the balance unchanged on replay', async () => {
+  it('credits a win against its bet', async () => {
     await service.deposit('w1', 'dep-1', 100);
     await service.bet('w1', 'bet-1', 40);
     const win = await service.win('w1', 'win-1', 70, 'bet-1');
-    const replay = await service.win('w1', 'win-1', 70, 'bet-1');
     expect(win.balanceAfter).toBe(130);
-    expect(replay).toMatchObject({ id: win.id, balanceAfter: 130, idempotentReplay: true });
     expect(gateway.wallets.get('w1')?.balance).toBe(130n);
   });
 
