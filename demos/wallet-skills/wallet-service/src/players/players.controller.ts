@@ -23,10 +23,10 @@ export class PlayersController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List players with balances. Pass nextCursor back as cursor.' })
+  @ApiOperation({ summary: 'List players with balances, page by page.' })
   @ApiOkResponse({ type: PlayerListDto })
   list(@Query() query: ListPlayersQuery): Promise<PlayerListDto> {
-    return this.players.list(query.cursor, query.limit ?? 20);
+    return this.players.list(query.page ?? 1, query.limit ?? 20);
   }
 
   @Get(':id/wallet')

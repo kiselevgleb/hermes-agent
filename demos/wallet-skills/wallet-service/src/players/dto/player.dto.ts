@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class CreatePlayerDto {
   @ApiProperty({ example: 'alice' })
@@ -12,10 +12,12 @@ export class CreatePlayerDto {
 }
 
 export class ListPlayersQuery {
-  @ApiProperty({ required: false, description: 'Player id of the last row on the previous page' })
+  @ApiProperty({ required: false, default: 1, minimum: 1, description: 'Page number, starting at 1' })
   @IsOptional()
-  @IsUUID('4')
-  cursor?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
 
   @ApiProperty({ required: false, default: 20, minimum: 1, maximum: 100 })
   @IsOptional()
@@ -87,8 +89,8 @@ export class PlayerListDto {
   items!: PlayerListItemDto[];
 
   @ApiProperty()
-  limit!: number;
+  page!: number;
 
-  @ApiProperty({ nullable: true })
-  nextCursor!: string | null;
+  @ApiProperty()
+  limit!: number;
 }
