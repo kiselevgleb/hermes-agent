@@ -1,16 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { asBigint, money } from '../common/money';
+import { money } from '../common/money';
 import { PrismaService } from '../prisma/prisma.service';
-import { LIST_PLAYERS_AFTER_SQL, LIST_PLAYERS_SQL } from '../wallets/sql';
 import { PlayerListDto, PlayerResponseDto, WalletResponseDto } from './dto/player.dto';
-
-type PlayerRow = {
-  id: string;
-  name: string;
-  created_at: Date | string;
-  wallet_id: string;
-  balance: string;
-};
 
 @Injectable()
 export class PlayersService {
@@ -54,39 +45,34 @@ export class PlayersService {
     };
   }
 
-  async list(cursor: string | undefined, limit: number): Promise<PlayerListDto> {
+  async list(page: number, limit: number): Promise<PlayerListDto> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw new BadRequestException('limit must be between 1 and 100');
     }
-
-    const take = limit + 1;
-    const rows = cursor
-      ? await this.pageAfter(cursor, take)
-      : await this.prisma.$queryRawUnsafe<PlayerRow[]>(LIST_PLAYERS_SQL, take);
-
-    const page = rows.slice(0, limit);
-    return {
-      items: page.map((row) => ({
-        id: row.id,
-        name: row.name,
-        createdAt: iso(row.created_at),
-        walletId: row.wallet_id,
-        balance: money(asBigint(row.balance)),
-      })),
-      limit,
-      nextCursor: rows.length > limit ? (page[page.length - 1]?.id ?? null) : null,
-    };
-  }
-
-  private async pageAfter(cursor: string, take: number): Promise<PlayerRow[]> {
-    const anchor = await this.prisma.player.findUnique({ where: { id: cursor }, select: { id: true } });
-    if (!anchor) {
-      throw new BadRequestException('unknown cursor');
+    if (!Number.isInteger(page) || page < 1) {
+      throw new BadRequestException('page must be a positive integer');
     }
-    return this.prisma.$queryRawUnsafe<PlayerRow[]>(LIST_PLAYERS_AFTER_SQL, cursor, take);
-  }
-}
 
-function iso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+    // Page numbers are easier for the admin UI than opaque cursors.
+    const players = await this.prisma.player.findMany({
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    const items: PlayerListDto['items'] = [];
+    for (const player of players) {
+      const wallet = await this.prisma.wallet.findUnique({ where: { playerId: player.id } });
+      if (!wallet) continue;
+      items.push({
+        id: player.id,
+        name: player.name,
+        createdAt: player.createdAt.toISOString(),
+        walletId: wallet.id,
+        balance: money(wallet.balance),
+      });
+    }
+
+    return { items, page, limit };
+  }
 }
